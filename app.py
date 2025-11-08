@@ -6,9 +6,10 @@ from oauth2client.service_account import ServiceAccountCredentials
 from datetime import datetime
 
 # --- CONFIGURATION ---
-SHEET_NAME = "Oral Health Logs"  # EXACT name of your Google Sheet
+SHEET_NAME = "Oral Health Logs"
+GOOGLE_FORM_URL = "https://forms.gle/2xNqVJq3Tzm8Cq859" # <-- PASTE YOUR GOOGLE FORM LINK HERE
 
-# --- 1. LOAD RESOURCES (Model & Sheets) ---
+# --- LOAD RESOURCES ---
 @st.cache_resource
 def load_model_resources():
     model = joblib.load("oral_health_model.pkl")
@@ -17,16 +18,11 @@ def load_model_resources():
 
 @st.cache_resource
 def get_google_sheet():
-    # Define the scope needed to access Sheets and Drive
-    scope = ['https://www.googleapis.com/auth/spreadsheets',
-             'https://www.googleapis.com/auth/drive']
-    # Authenticate using secrets
+    scope = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
     creds = ServiceAccountCredentials.from_json_keyfile_dict(dict(st.secrets["gcp_service_account"]), scope)
     client = gspread.authorize(creds)
-    # Open the sheet
     return client.open(SHEET_NAME).sheet1
 
-# Load Resources immediately
 try:
     model, label_encoder = load_model_resources()
 except Exception as e:
@@ -35,7 +31,7 @@ except Exception as e:
 
 st.set_page_config(page_title="Oral Health Bot", layout="centered")
 st.title("🦷 Oral Health Self-Evaluation")
-st.write("Answer the questions below to assess your current oral health status.")
+st.write("Please provide your basic details and answer the questions below.")
 
 # --- QUESTIONS SETUP ---
 question_groups = {
@@ -48,26 +44,37 @@ question_groups = {
     "Soft Tissue Lesions": {'Q25': "White patch in the mouth", 'Q26': "Burning sensation with white patch", 'Q27': "Long-time ulcer in the mouth", 'Q28': "Pain with the ulcer", 'Q29': "Burning sensation with the ulcer"}
 }
 
-# --- FORM ---
+# --- MAIN FORM ---
 with st.form("oral_health_form"):
+    st.subheader("👤 Basic Details")
+    c1, c2 = st.columns(2)
+    with c1:
+        age = st.number_input("Age", min_value=1, max_value=120, step=1, value=25)
+    with c2:
+        gender = st.selectbox("Gender", ["Male", "Female", "Other", "Prefer not to say"])
+
+    st.markdown("---")
+    
     user_input = {}
     for group, questions in question_groups.items():
         st.markdown(f"### 🔹 {group}")
         for key, question in questions.items():
             user_input[key] = st.checkbox(question)
-    submitted = st.form_submit_button("🧾 Evaluate My Oral Health")
+            
+    submitted = st.form_submit_button("🧾 Evaluate My Oral Health", type="primary")
 
 # --- PROCESS SUBMISSION ---
 if submitted:
-    # 1. Predict
-    input_values = [1 if val else 0 for val in user_input.values()]
-    input_df = pd.DataFrame([input_values], columns=user_input.keys())
+    # 1. PREDICT (Only using symptom inputs, NOT age/gender)
+    symptom_values = [1 if val else 0 for val in user_input.values()]
+    # Ensure DataFrame has exact columns model expects
+    input_df = pd.DataFrame([symptom_values], columns=user_input.keys())
     
     prediction = model.predict(input_df)[0]
     predicted_label = label_encoder.inverse_transform([prediction])[0]
 
-    # 2. Display Results
-    st.markdown("---")
+    # 2. DISPLAY RESULTS
+    st.divider()
     st.subheader("🦷 Your Oral Health Condition:")
     if predicted_label == "Good":
         st.success("✅ Good – You’re in good oral health. Recommended check-up every 12 months.")
@@ -76,19 +83,26 @@ if submitted:
     elif predicted_label == "Bad":
         st.error("🚨 Bad – Immediate dental consultation recommended.")
 
-    # 3. Log to Google Sheets (Background Task)
+    # 3. LOG TO SHEETS (Includes age/gender now)
     with st.spinner("Logging results..."):
         try:
             sheet = get_google_sheet()
-            # Create row: Timestamp + Inputs (0/1) + Prediction
             timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            log_row = [timestamp] + input_values + [predicted_label]
+            # Log format: [Time, Age, Gender, Q1...Q29, Result]
+            log_row = [timestamp, age, gender] + symptom_values + [predicted_label]
             sheet.append_row(log_row)
-            # Optional: quiet success message for logging
-            # st.toast("Entry logged successfully!", icon="📝") 
         except Exception as e:
-            # Don't break the app if logging fails, just warn the user (or admin)
-            st.warning(f"Evaluation complete, but could not log data: {e}")
+            st.warning(f"Evaluation complete, but logging failed: {e}")
 
-    st.markdown("___")
+    # 4. POST-EVALUATION ACTION BUTTONS
+    st.divider()
+    col_f1, col_f2 = st.columns(2)
+    with col_f1:
+        # Link button opens in new tab
+        st.link_button("💬 Give Feedback (Google Form)", GOOGLE_FORM_URL, use_container_width=True)
+    with col_f2:
+        # Rerun button resets the app state
+        if st.button("🔄 Start New Evaluation", use_container_width=True):
+            st.rerun()
+
     st.caption("AI-based preliminary evaluation only. Consult a dentist for clinical diagnosis.")
