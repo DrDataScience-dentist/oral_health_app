@@ -77,29 +77,18 @@ if submitted:
         st.error("🚨 Bad – Immediate dental consultation recommended.")
 
     # 3. Log to Google Sheets (Background Task)
-   # 3. Log to Google Sheets (Debug Version)
     with st.spinner("Logging results..."):
         try:
-            # Test connection first
-            client = get_google_sheet().client
-            st.write(f"Debug: Connected as {client.auth.service_account_email}")
-
-            # Test opening sheet
-            sheet = client.open(SHEET_NAME).sheet1
-            st.write(f"Debug: Found sheet '{SHEET_NAME}'")
-
-            # Prepare data
+            sheet = get_google_sheet()
+            # Create row: Timestamp + Inputs (0/1) + Prediction
             timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             log_row = [timestamp] + input_values + [predicted_label]
-            
-            # Attempt append
-            response = sheet.append_row(log_row)
-            st.success(f"Logged successfully! Response: {response}")
-
-        except gspread.exceptions.SpreadsheetNotFound:
-            st.error(f"❌ Error: Could not find Google Sheet named '{SHEET_NAME}'. Check the name exactly.")
-        except gspread.exceptions.APIError as api_err:
-            st.error(f"❌ Google API Error: {api_err}")
+            sheet.append_row(log_row)
+            # Optional: quiet success message for logging
+            # st.toast("Entry logged successfully!", icon="📝") 
         except Exception as e:
-            st.error(f"❌ Unexpected Error Type: {type(e).__name__}")
-            st.error(f"Error Details: {e}")
+            # Don't break the app if logging fails, just warn the user (or admin)
+            st.warning(f"Evaluation complete, but could not log data: {e}")
+
+    st.markdown("___")
+    st.caption("AI-based preliminary evaluation only. Consult a dentist for clinical diagnosis.")
